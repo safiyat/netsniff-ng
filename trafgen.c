@@ -82,6 +82,7 @@ struct ctx {
 	struct dev_io *dev_out;
 	struct dev_io *dev_in;
 	unsigned long num;
+	unsigned long cpu_coremask;
 	unsigned int cpu_start;
 	unsigned int cpu_num;
 	uid_t uid; gid_t gid;
@@ -108,7 +109,7 @@ size_t plen = 0;
 struct packet_dyn *packet_dyn = NULL;
 size_t dlen = 0;
 
-static const char *short_options = "d:c:n:t:vJhS:rk:i:o:VRs:P:eE:pu:g:CHQqD:b:";
+static const char *short_options = "d:c:n:t:vJhS:rk:i:o:VRs:P:x:eE:pu:g:CHQqD:b:";
 static const struct option long_options[] = {
 	{"dev",			required_argument,	NULL, 'd'},
 	{"out",			required_argument,	NULL, 'o'},
@@ -118,6 +119,7 @@ static const struct option long_options[] = {
 	{"gap",			required_argument,	NULL, 't'},
 	{"rate",		required_argument,	NULL, 'b'},
 	{"cpus",		required_argument,	NULL, 'P'},
+	{"coremask",		required_argument,	NULL, 'x'},
 	{"ring-size",		required_argument,	NULL, 'S'},
 	{"kernel-pull",		required_argument,	NULL, 'k'},
 	{"smoke-test",		required_argument,	NULL, 's'},
@@ -197,6 +199,7 @@ static void __noreturn help(void)
 	     "  -n|--num <uint>                       Number of packets until exit (def: 0)\n"
 	     "  -r|--rand                             Randomize packet selection (def: round robin)\n"
 	     "  -P|--cpus <uint>[-<uint>]             Specify number of forks(<= CPUs) (def: #CPUs)\n"
+	     "  -x|--coremask <uint>[-<uint>]         Specify the coremask number for the CPUs to use. ex: 6 for CPU1 and CPU2.\n"
 	     "  -t|--gap <time>                       Set approx. interpacket gap (s/ms/us/ns, def: us)\n"
 	     "  -b|--rate <rate>                      Send traffic at specified rate (pps/kpps/Mpps/B/kB/MB/GB/kbit/Mbit/Gbit/KiB/MiB/GiB)\n"
 	     "  -S|--ring-size <size>                 Manually set mmap size (KiB/MiB/GiB)\n"
@@ -1011,9 +1014,9 @@ int main(int argc, char **argv)
 	bool prio_high = false, set_irq_aff = true, set_sock_mem = true;
 	int c, vals[4] = {0}, irq;
 	uint64_t gap = 0;
-	unsigned int i;
+	unsigned int i, to_be_or_not_to_be;
 	char *confname = NULL, *ptr;
-	unsigned long cpu_n, orig_num = 0;
+	unsigned long cpu_n, orig_num = 0, cpu_coremask;
 	unsigned long long tx_packets, tx_bytes;
 	struct ctx ctx;
 	int min_opts = 5;
@@ -1073,6 +1076,10 @@ int main(int argc, char **argv)
 			} else if (cpu_n > 0 && cpu_n <= ctx.cpu_num)
 				ctx.cpu_num = cpu_n;
 			break;
+                case 'x':
+                        cpu_coremask = strtoul(optarg, &ptr, 0);
+                        ctx.cpu_coremask = cpu_coremask;
+                        break;
 		case 'd':
 		case 'o':
 			ctx.device = xstrdup(optarg);
@@ -1333,6 +1340,15 @@ int main(int argc, char **argv)
 		printf("Start %u worker processes on cpus [%u-%u].\n",
 		       ctx.cpu_num, ctx.cpu_start, ctx.cpu_start + ctx.cpu_num - 1);
 	for (i = 0; i < ctx.cpu_num; i++) {
+                if (ctx.cpu_coremask) {
+                        to_be_or_not_to_be = (1<<i) & ctx.cpu_coremask;
+                        if (to_be_or_not_to_be == 0){
+                                printf("The core %u does not match the coremask %lu. Skipping!\n", i, ctx.cpu_coremask);
+                                continue;
+                        }
+                        else
+                                printf("The core %u matches the coremask %lu. Not skipping!\n", i, ctx.cpu_coremask);
+                }
 		pid_t pid = fork();
 
 		switch (pid) {
